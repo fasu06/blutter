@@ -87,7 +87,8 @@ void DartDumper::Dump4Ida(std::filesystem::path outDir)
 	std::filesystem::create_directory(outDir);
 	std::ofstream of((outDir / "addNames.py").string());
 	of << "import ida_funcs\n";
-	of << "import idaapi\n\n";
+	of << "import idaapi\n";
+	of << "import idc\n\n";
 
 	for (auto lib : app.libs) {
 		std::string lib_prefix = lib->GetName();
@@ -134,9 +135,8 @@ void DartDumper::Dump4Ida(std::filesystem::path outDir)
 	//   use header file then adding comment is much faster
 	auto comments = DumpStructHeaderFile((outDir / "ida_dart_struct.h").string());
 	of << R"CBLOCK(
-import ida_struct
 import os
-def create_Dart_structs():
+def create_Dart_structs() -> tuple[int, int]:
 	sid1 = idc.get_struc_id("DartThread")
 	if sid1 != idc.BADADDR:
 		return sid1, idc.get_struc_id("DartObjectPool")
@@ -144,10 +144,9 @@ def create_Dart_structs():
 	idaapi.idc_parse_types(hdr_file, idc.PT_FILE)
 	sid1 = idc.import_type(-1, "DartThread")
 	sid2 = idc.import_type(-1, "DartObjectPool")
-	struc = ida_struct.get_struc(sid2)
 )CBLOCK";
 	for (const auto& [offset, comment] : comments) {
-		of << "\tida_struct.set_member_cmt(ida_struct.get_member(struc, " << offset << "), '''" << comment << "''', True)\n";
+		of << "\tidc.set_member_cmt(sid2, " << offset << ", '''" << comment << "''', True)\n";
 	}
 	of << "\treturn sid1, sid2\n";
 	of << "thrs, pps = create_Dart_structs()\n";
@@ -246,9 +245,6 @@ void DartDumper::applyStruct4Ida(std::ostream& of)
 {
 	Disassembler disasmer;
 
-	of << "import ida_ua\n";
-	of << "insn = ida_ua.insn_t()\n";
-
 	for (auto lib : app.libs) {
 		if (lib->isInternal)
 			continue;
@@ -271,14 +267,12 @@ void DartDumper::applyStruct4Ida(std::ostream& of)
 						else if (insn.ops[j].type == ARM64_OP_MEM)
 							reg = insn.ops[j].mem.base;
 						if (reg == CSREG_DART_THR) {
-							of << "ida_ua.decode_insn(insn, " << insn.address() << ")\n";
-							of << "idc.op_stroff(insn, " << (int)j << ", thrs, 0)\n";
+							of << "idc.op_stroff(" << insn.address() << ", " << (int)j << ", thrs, 0)\n";
 							break;
 						}
 						else if (reg == CSREG_DART_PP) {
 							// TODO: if it is not MEM operand, reg cannot be struct offset
-							of << "ida_ua.decode_insn(insn, " << insn.address() << ")\n";
-							of << "idc.op_stroff(insn, " << (int)j << ", pps, 0)\n";
+							of << "idc.op_stroff(" << insn.address() << ", " << (int)j << ", pps, 0)\n";
 							break;
 						}
 					}
