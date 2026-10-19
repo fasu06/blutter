@@ -1629,6 +1629,12 @@ void FunctionAnalyzer::handleArgumentsDescriptorTypeArguments(AsmIterator& insn)
 		//objPoolInstr.item.Get<VarTypeArgument>();
 		fnInfo->State()->ClearRegister(objPoolInstr.dstReg);
 
+		if (elseAddr == insn.address()) {
+			// Newer codegen shares the result register and omits the else move.
+			INSN_ASSERT(objPoolInstr.dstReg == A64::Register{ typeArgReg });
+			return;
+		}
+
 		INSN_ASSERT(insn.IsBranch());
 		const auto contAddr = insn.ops(0).imm;
 		++insn;
