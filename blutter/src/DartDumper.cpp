@@ -82,13 +82,33 @@ static std::string getFunctionName4Ida(const DartFunction& dartFn, const std::st
 	return prefix + fnName;
 }
 
+static std::string quotePythonString(const std::string& value)
+{
+	std::string result = "\"";
+	for (unsigned char c : value) {
+		if (c == '\\' || c == '"') {
+			result += '\\';
+			result += c;
+		}
+		else if (c < 32 || c == 127) {
+			result += std::format("\\x{:02x}", c);
+		}
+		else {
+			result += c;
+		}
+	}
+	return result + '"';
+}
+
 void DartDumper::Dump4Ida(std::filesystem::path outDir)
 {
 	std::filesystem::create_directory(outDir);
 	std::ofstream of((outDir / "addNames.py").string());
-	of << "import ida_funcs\n";
-	of << "import idaapi\n";
-	of << "import idc\n\n";
+	std::ifstream templateFile(FRIDA_TEMPLATE_DIR "/ida.template.py");
+	if (!templateFile)
+		throw std::runtime_error("Cannot open IDA script template");
+	of << templateFile.rdbuf();
+	of << "\ndef create_functions() -> None:\n\tpass\n";
 
 	for (auto lib : app.libs) {
 		std::string lib_prefix = lib->GetName();
@@ -99,17 +119,17 @@ void DartDumper::Dump4Ida(std::filesystem::path outDir)
 				auto name = getFunctionName4Ida(*dartFn, cls_prefix);
 				const auto fnSize = dartFn->Size();
 				if (fnSize > 0) {
-					of << std::format("ida_funcs.add_func({:#x}, {:#x})\n", ep, ep + fnSize);
+					of << std::format("\tadd_function({:#x}, {:#x})\n", ep, ep + fnSize);
 				}
-				of << std::format("idaapi.set_name({:#x}, \"{}_{}::{}_{:x}\")\n", ep, lib_prefix, cls_prefix, name.c_str(), ep);
+				of << std::format("\tset_name({:#x}, {})\n", ep, quotePythonString(std::format("{}_{}::{}_{:x}", lib_prefix, cls_prefix, name, ep)));
 				if (dartFn->HasMorphicCode()) {
 					const auto payloadAddr = dartFn->PayloadAddress();
 					const auto morphicAddr = dartFn->MonomorphicAddress();
 					if (payloadAddr != 0 && payloadAddr != ep) {
-						of << std::format("idaapi.set_name({:#x}, \"{}_{}::{}_{:x}_miss\")\n", payloadAddr, lib_prefix, cls_prefix, name.c_str(), ep);
+						of << std::format("\tset_name({:#x}, {})\n", payloadAddr, quotePythonString(std::format("{}_{}::{}_{:x}_miss", lib_prefix, cls_prefix, name, ep)));
 					}
 					if (morphicAddr != 0 && morphicAddr != ep && morphicAddr != payloadAddr) {
-						of << std::format("idaapi.set_name({:#x}, \"{}_{}::{}_{:x}_check\")\n", morphicAddr, lib_prefix, cls_prefix, name.c_str(), ep);
+						of << std::format("\tset_name({:#x}, {})\n", morphicAddr, quotePythonString(std::format("{}_{}::{}_{:x}_check", lib_prefix, cls_prefix, name, ep)));
 					}
 				}
 			}
@@ -124,37 +144,35 @@ void DartDumper::Dump4Ida(std::filesystem::path outDir)
 		std::replace(name.begin(), name.end(), '>', '@');
 		std::replace(name.begin(), name.end(), ',', '&');
 		std::replace(name.begin(), name.end(), ' ', '_');
-		of << std::format("idaapi.set_name({:#x}, \"{}_{:x}\")\n", ep, name.c_str(), ep);
-		if (stub->Size() == 0)
+		of << std::format("\tset_name({:#x}, {})\n", ep, quotePythonString(std::format("{}_{:x}", name, ep)));
+		if (stub->Size() <= 0)
 			continue;
-		of << std::format("ida_funcs.add_func({:#x}, {:#x})\n", ep, ep + stub->Size());
+		of << std::format("\tadd_function({:#x}, {:#x})\n", ep, ep + stub->Size());
 	}
 
 
-	// Note: create struct with a lot of member by ida script is very slow
-	//   use header file then adding comment is much faster
 	auto comments = DumpStructHeaderFile((outDir / "ida_dart_struct.h").string());
 	of << R"CBLOCK(
-import os
 def create_Dart_structs() -> tuple[int, int]:
 	sid1 = idc.get_struc_id("DartThread")
-	if sid1 != idc.BADADDR:
-		return sid1, idc.get_struc_id("DartObjectPool")
-	hdr_file = os.path.join(os.path.dirname(__file__), 'ida_dart_struct.h')
-	idaapi.idc_parse_types(hdr_file, idc.PT_FILE)
-	sid1 = idc.import_type(-1, "DartThread")
-	sid2 = idc.import_type(-1, "DartObjectPool")
+	sid2 = idc.get_struc_id("DartObjectPool")
+	if sid1 == idc.BADADDR or sid2 == idc.BADADDR:
+		hdr_file = str(Path(__file__).with_name('ida_dart_struct.h'))
+		if idaapi.idc_parse_types(hdr_file, idc.PT_FILE) != 0:
+			raise RuntimeError('Cannot parse Dart structure header')
+		sid1 = idc.import_type(-1, "DartThread")
+		sid2 = idc.import_type(-1, "DartObjectPool")
+	if sid1 == idc.BADADDR or sid2 == idc.BADADDR:
+		raise RuntimeError('Cannot import Dart types')
+	comments: dict[int, str] = {
 )CBLOCK";
 	for (const auto& [offset, comment] : comments) {
-		of << "\tidc.set_member_cmt(sid2, " << offset << ", '''" << comment << "''', True)\n";
+		of << "\t\t" << offset << ": " << quotePythonString(comment) << ",\n";
 	}
-	of << "\treturn sid1, sid2\n";
-	of << "thrs, pps = create_Dart_structs()\n";
-
-	of << "print('Applying Thread and Object Pool struct')\n";
+	of << "\t}\n\tsave_comments(sid2, comments)\n\treturn sid1, sid2\n";
+	of << "\ndef apply_offsets(thrs: int, pps: int) -> None:\n\tpass\n";
 	applyStruct4Ida(of);
-
-	of << "print('Script finished!')\n";
+	of << "\nrun_import(create_functions, create_Dart_structs, apply_offsets)\n";
 }
 
 std::vector<std::pair<intptr_t, std::string>> DartDumper::DumpStructHeaderFile(std::string outFile)
@@ -267,12 +285,12 @@ void DartDumper::applyStruct4Ida(std::ostream& of)
 						else if (insn.ops[j].type == ARM64_OP_MEM)
 							reg = insn.ops[j].mem.base;
 						if (reg == CSREG_DART_THR) {
-							of << "idc.op_stroff(" << insn.address() << ", " << (int)j << ", thrs, 0)\n";
+							of << "\tapply_offset(" << insn.address() << ", " << (int)j << ", thrs)\n";
 							break;
 						}
 						else if (reg == CSREG_DART_PP) {
 							// TODO: if it is not MEM operand, reg cannot be struct offset
-							of << "idc.op_stroff(" << insn.address() << ", " << (int)j << ", pps, 0)\n";
+							of << "\tapply_offset(" << insn.address() << ", " << (int)j << ", pps)\n";
 							break;
 						}
 					}
