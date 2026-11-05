@@ -3,6 +3,7 @@ import os
 import re
 import requests
 import sys
+from typing import Literal, overload
 import zipfile
 import zlib
 from struct import unpack
@@ -12,39 +13,53 @@ from elftools.elf.enums import ENUM_E_MACHINE
 from elftools.elf.sections import SymbolTableSection
 
 # TODO: support both ELF and Mach-O file
+def snapshot_offset(elf: ELFFile, address: int) -> int:
+    for segment in elf.iter_segments():
+        start = int(segment['p_vaddr'])
+        size = int(segment['p_memsz'])
+        if start <= address < start + size:
+            return int(segment['p_offset']) + address - start
+    return address
+
 def extract_snapshot_hash_flags(libapp_file):
     with open(libapp_file, 'rb') as f:
         elf = ELFFile(f)
         # find "_kDartVmSnapshotData" symbol
         dynsym = elf.get_section_by_name('.dynsym')
-        sym = dynsym.get_symbol_by_name('_kDartVmSnapshotData')[0]
+        assert isinstance(dynsym, SymbolTableSection)
+        symbols = dynsym.get_symbol_by_name('_kDartVmSnapshotData')
+        assert symbols
+        sym = symbols[0]
         #section = elf.get_section(sym['st_shndx'])
         assert sym['st_size'] > 128
-        f.seek(sym['st_value']+20)
+        offset = snapshot_offset(elf, sym['st_value'])
+        f.seek(offset + 20)
         snapshot_hash = f.read(32).decode()
         data = f.read(256) # should be enough
         flags = data[:data.index(b'\0')].decode().strip().split(' ')
     
     return snapshot_hash, flags
 
-def extract_libflutter_info(libflutter_file):
+def extract_libflutter_info(libflutter_file, allow_partial_engine_ids=False):
     with open(libflutter_file, 'rb') as f:
         elf = ELFFile(f)
         if elf.header.e_machine == 'EM_AARCH64': # 183
             arch = 'arm64'
-        elif elf.header.e_machine == 'EM_IA_64': # 50
+        elif elf.header.e_machine in ('EM_IA_64', 'EM_X86_64'): # 50, 62
             arch = 'x64'
         else:
             assert False, f"Unsupport architecture: {elf.header.e_machine}"
 
         section = elf.get_section_by_name('.rodata')
+        assert section is not None
         data = section.data()
         
         sha_hashes = re.findall(b'\x00([a-f\\d]{40})(?=\x00)', data)
         #print(sha_hashes)
         # all possible engine ids
         engine_ids = [ h.decode() for h in sha_hashes ]
-        assert len(engine_ids) == 2, f'found hashes {", ".join(engine_ids)}'
+        if not allow_partial_engine_ids:
+            assert len(engine_ids) == 2, f'found hashes {", ".join(engine_ids)}'
         
         # beta/dev version of flutter might not use stable dart version (we can get dart version from sdk with found engine_id)
         # support stable, beta and dev channels
@@ -101,14 +116,24 @@ def get_dart_commit(url):
     # TODO: if no revision and version in first 4096 bytes, get the file location from the first zip dir entries at the end of file (less than 256KB)
     return commit_id, dart_version
 
-def extract_dart_info(libapp_file: str, libflutter_file: str):
+@overload
+def extract_dart_info(libapp_file: str, libflutter_file: str, return_engine_ids: Literal[False] = False) -> tuple[str, str, list[str], str, str]: ...
+
+@overload
+def extract_dart_info(libapp_file: str, libflutter_file: str, return_engine_ids: Literal[True]) -> tuple[str, str, list[str], str, str, list[str]]: ...
+
+def extract_dart_info(libapp_file: str, libflutter_file: str, return_engine_ids: bool = False) -> tuple[str, str, list[str], str, str] | tuple[str, str, list[str], str, str, list[str]]:
     snapshot_hash, flags = extract_snapshot_hash_flags(libapp_file)
     #print('snapshot hash', snapshot_hash)
     #print(flags)
 
-    engine_ids, dart_version, arch, os_name = extract_libflutter_info(libflutter_file)
+    engine_ids, dart_version, arch, os_name = extract_libflutter_info(
+        libflutter_file, allow_partial_engine_ids='ohos' in flags)
     # print('possible engine ids', engine_ids)
     # print('dart version', dart_version)
+
+    if 'ohos' in flags:
+        os_name = 'ohos'
 
     if dart_version is None:
         engine_id, sdk_url, sdk_size = get_dart_sdk_url_size(engine_ids)
@@ -122,6 +147,9 @@ def extract_dart_info(libapp_file: str, libflutter_file: str):
         #assert dart_version == dart_version_sdk
     
     # TODO: os (android or ios) and architecture (arm64 or x64)
+    assert dart_version is not None
+    if return_engine_ids:
+        return dart_version, snapshot_hash, flags, arch, os_name, engine_ids
     return dart_version, snapshot_hash, flags, arch, os_name
 
 

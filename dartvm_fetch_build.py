@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import mmap
 import os
 import shutil
 import stat
 import subprocess
 import sys
+
+import ohos_sdk
 
 # assume git and cmake (64 bits) command is in PATH
 GIT_CMD = "git"
@@ -33,22 +37,39 @@ def load_source(modname, filename):
 """
 
 class DartLibInfo:
-    def __init__(self, version: str, os_name: str, arch: str, has_compressed_ptrs = None, snapshot_hash = None):
+    def __init__(self, version: str, os_name: str, arch: str, has_compressed_ptrs: bool | None = None,
+                 snapshot_hash: str | None = None, commit: str | None = None, engine_ids: list[str] | None = None):
         self.version = version
         self.os_name = os_name
         self.arch = arch
         self.snapshot_hash = snapshot_hash
+        self.commit = commit
+        self.engine_ids = engine_ids or []
         if has_compressed_ptrs is None:
             # use same as flutter default configuration
             # TODO: old Dart version has no pointer compression
             self.has_compressed_ptrs = os_name != 'ios'
         else:
             self.has_compressed_ptrs = has_compressed_ptrs
-        self.lib_name = f'dartvm{version}_{os_name}_{arch}'
+
+        self.is_custom_commit = commit is not None
+        if os_name == 'ohos':
+            resolved_commit = commit or ohos_sdk.resolve_ohos_dart_branch(version, snapshot_hash, engine_ids)
+            self.commit = resolved_commit
+            # Keep naming concise to prevent MSVC MAX_PATH (260) failures on Windows
+            if commit:
+                self.identity = f'{version}_ohos_{commit[:7]}'
+            else:
+                self.identity = f'{version}_ohos'
+            self.lib_name = f'dartvm{self.identity}_{arch}'
+        else:
+            self.identity = version
+            self.lib_name = f'dartvm{version}_{os_name}_{arch}'
 
 
 def checkout_dart(info: DartLibInfo):
-    clonedir = os.path.join(SDK_DIR, 'v'+info.version)
+    clonedir = (ohos_sdk.checkout_dir(info.version, info.commit, info.is_custom_commit)
+                if info.os_name == 'ohos' else os.path.join(SDK_DIR, 'v'+info.version))
 
     # if no version file,assume previous clone is failed. delete the whole directory and try again.
     version_file = os.path.join(clonedir, 'runtime', 'vm', 'version.cc')
@@ -61,11 +82,14 @@ def checkout_dart(info: DartLibInfo):
     
     # clone Dart source code
     if not os.path.exists(clonedir):
-        # minimum clone repository at the target branch
-        subprocess.run([GIT_CMD, '-c', 'advice.detachedHead=false', 'clone', '-b', info.version, '--depth', '1', '--filter=blob:none', '--sparse', '--progress', DART_GIT_URL, clonedir], check=True)
-        # checkout only needed sources (runtime and tools)
-        # since Dart 3.3 "third_party/double-conversion" is moved to outside of "runtime" directory
-        subprocess.run([GIT_CMD, 'sparse-checkout', 'set', 'runtime', 'tools', 'third_party/double-conversion'], cwd=clonedir, check=True)
+        if info.os_name == 'ohos':
+            ohos_sdk.clone_sdk(clonedir, info.commit or info.version)
+        else:
+            # minimum clone repository at the target branch
+            subprocess.run([GIT_CMD, '-c', 'advice.detachedHead=false', 'clone', '-b', info.version, '--depth', '1', '--filter=blob:none', '--sparse', '--progress', DART_GIT_URL, clonedir], check=True)
+            # checkout only needed sources (runtime and tools)
+            # since Dart 3.3 "third_party/double-conversion" is moved to outside of "runtime" directory
+            subprocess.run([GIT_CMD, 'sparse-checkout', 'set', 'runtime', 'tools', 'third_party/double-conversion'], cwd=clonedir, check=True)
         # delete some unnecessary files
         with os.scandir(clonedir) as it:
             for entry in it:
@@ -137,7 +161,7 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
     with open(CMAKE_TEMPLATE_FILE, 'r') as f:
         code = f.read()
     with open(os.path.join(target_dir, 'CMakeLists.txt'), 'w') as f:
-        f.write(code.replace('VERSION_PLACE_HOLDER', info.version).replace('CXX_STD_PLACE_HOLDER', cpp_std))
+        f.write(code.replace('VERSION_PLACE_HOLDER', info.identity).replace('CXX_STD_PLACE_HOLDER', cpp_std))
 
     # create dartsdk/vx.y.z/Config.cmake.in
     with open(os.path.join(target_dir, 'Config.cmake.in'), 'w') as f:

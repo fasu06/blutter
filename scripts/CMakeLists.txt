@@ -26,8 +26,8 @@ string(SUBSTRING ${PROJECT_NAME} 6 -1 DART_VERSION)
 if (NOT DEFINED TARGET_OS)
 	set(TARGET_OS "android")
 endif()
-if (NOT "${TARGET_OS}" MATCHES "^(android|ios)$")
-	message(FATAL_ERROR "Only android or ios platform")
+if (NOT "${TARGET_OS}" MATCHES "^(android|ios|ohos)$")
+	message(FATAL_ERROR "Only android, ios or ohos platform")
 endif()
 
 if (NOT DEFINED TARGET_ARCH)
@@ -38,7 +38,11 @@ if (NOT "${TARGET_ARCH}" MATCHES "^(arm64|x64)$")
 endif()
 
 set(SRCDIR "runtime")
-set(LIBNAME "dartvm${DART_VERSION}_${TARGET_OS}_${TARGET_ARCH}")
+if (${TARGET_OS} STREQUAL "ohos" AND "${DART_VERSION}" MATCHES "_ohos")
+	set(LIBNAME "dartvm${DART_VERSION}_${TARGET_ARCH}")
+else()
+	set(LIBNAME "dartvm${DART_VERSION}_${TARGET_OS}_${TARGET_ARCH}")
+endif()
 
 set(CMAKE_DEBUG_POSTFIX "_d")
 
@@ -59,6 +63,8 @@ if (${TARGET_OS} STREQUAL "android")
 	set(target_os "DART_TARGET_OS_ANDROID")
 	# Note: DART_COMPRESSED_POINTERS should be from the binary
 	#set(dart_pointers "DART_COMPRESSED_POINTERS")
+elseif (${TARGET_OS} STREQUAL "ohos")
+	set(target_os "DART_TARGET_OS_OHOS")
 else()
 	set(target_os "DART_TARGET_OS_MACOS_IOS")
 endif()
@@ -161,9 +167,13 @@ configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
 	NO_CHECK_REQUIRED_COMPONENTS_MACRO
 )
 
+# write_basic_package_version_file needs a bare X.Y.Z when the package id carries a suffix
+set(DART_SEMVER "${DART_VERSION}")
+string(REGEX REPLACE "^([0-9]+\\.[0-9]+\\.[0-9]+).*" "\\1" DART_SEMVER "${DART_VERSION}")
+
 write_basic_package_version_file(
   "${CONFIG_VERSION_CMAKE}"
-  VERSION "${DART_VERSION}"
+  VERSION "${DART_SEMVER}"
   COMPATIBILITY ExactVersion
 )
 
