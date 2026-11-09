@@ -41,6 +41,9 @@ def snapshot_offset(elf: ELFFile) -> int:
         raise ValueError('Missing ELF dynamic symbol table')
     matches = symbols.get_symbol_by_name('_kDartVmSnapshotData')
     if not matches:
+        # newer engines export the snapshot as "_kDartSnapshotData"
+        matches = symbols.get_symbol_by_name('_kDartSnapshotData')
+    if not matches:
         raise ValueError('Missing Dart VM snapshot; an ARM64 AOT release build is required')
     address = int(matches[0]['st_value'])
     for segment in elf.iter_segments():

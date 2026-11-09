@@ -28,6 +28,9 @@ def extract_snapshot_hash_flags(libapp_file):
         dynsym = elf.get_section_by_name('.dynsym')
         assert isinstance(dynsym, SymbolTableSection)
         symbols = dynsym.get_symbol_by_name('_kDartVmSnapshotData')
+        if not symbols:
+            # newer engines export the snapshot as "_kDartSnapshotData"
+            symbols = dynsym.get_symbol_by_name('_kDartSnapshotData')
         assert symbols
         sym = symbols[0]
         #section = elf.get_section(sym['st_shndx'])

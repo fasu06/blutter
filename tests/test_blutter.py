@@ -4,8 +4,10 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
+import ohos_sdk
 from blutter import extract_libs_from_hap, find_compat_macro
 from dartvm_fetch_build import DartLibInfo
 from ohos_sdk import (
@@ -91,13 +93,21 @@ class BlutterUnifiedTests(unittest.TestCase):
         self.assertIsInstance(macros, list)
 
     def test_ohos_branches_file_cache(self) -> None:
-        test_data = {'9.9.9': 'flutter_test_branch_deps'}
-        save_cached_ohos_branches(test_data)
-        cached = load_cached_ohos_branches()
-        self.assertEqual(cached.get('9.9.9'), 'flutter_test_branch_deps')
-        # resolve_ohos_dart_branch should read from cache for previously unmapped versions
-        resolved = resolve_ohos_dart_branch('9.9.9')
-        self.assertEqual(resolved, 'flutter_test_branch_deps')
+        # keep the developer cache in dartsdk/ untouched
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ohos_sdk, 'SDK_DIR', temporary):
+            save_cached_ohos_branches({'9.9.9': 'flutter_test_branch_deps'})
+            self.assertEqual(load_cached_ohos_branches().get('9.9.9'), 'flutter_test_branch_deps')
+            # resolve_ohos_dart_branch should read from cache for previously unmapped versions
+            self.assertEqual(resolve_ohos_dart_branch('9.9.9'), 'flutter_test_branch_deps')
+
+    def test_ohos_version_branch_distinguishes_mapped_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ohos_sdk, 'SDK_DIR', temporary):
+            for version, branch in OHOS_VERSION_BRANCHES.items():
+                self.assertEqual(resolve_ohos_dart_branch(version), branch)
+
+    def test_ohos_branch_sort_key_orders_newest_last(self) -> None:
+        branches = ['flutter_3.22.0_deps', 'flutter_3.47.7_deps', 'flutter_3.35.7_deps', 'flutter_3.9.2_deps']
+        self.assertEqual(max(branches, key=ohos_sdk.branch_sort_key), 'flutter_3.47.7_deps')
 
     def test_resolve_ohos_dart_branch_from_engine_commit(self) -> None:
         # PiliPlus engine commit 24497d6833225b0445953e1dd05dc6538c16a8dd

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 
 # assume git command is in PATH
 GIT_CMD = 'git'
@@ -100,20 +101,7 @@ def fetch_branch_dart_version(branch: str) -> tuple[str, str] | None:
 
 
 def probe_remote_ohos_branches(target_version: str) -> str | None:
-    try:
-        cmd = [GIT_CMD, 'ls-remote', '--heads', OHOS_DART_GIT_URL]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
-    except Exception:
-        return None
-
-    branches: list[str] = []
-    for line in proc.stdout.splitlines():
-        parts = line.strip().split()
-        if len(parts) == 2 and parts[1].startswith('refs/heads/'):
-            name = parts[1].removeprefix('refs/heads/')
-            if name.startswith('flutter_') and name.endswith('_deps'):
-                branches.append(name)
-
+    branches = list_remote_branches()
     if not branches:
         return None
 
@@ -128,6 +116,58 @@ def probe_remote_ohos_branches(target_version: str) -> str | None:
         save_cached_ohos_branches(found_mapping)
         return found_mapping.get(target_version)
 
+    return None
+
+
+def list_remote_branches() -> list[str]:
+    try:
+        cmd = [GIT_CMD, 'ls-remote', '--heads', OHOS_DART_GIT_URL]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
+    except Exception:
+        return []
+
+    branches: list[str] = []
+    for line in proc.stdout.splitlines():
+        parts = line.strip().split()
+        if len(parts) == 2 and parts[1].startswith('refs/heads/'):
+            name = parts[1].removeprefix('refs/heads/')
+            if name.startswith('flutter_') and name.endswith('_deps'):
+                branches.append(name)
+    return branches
+
+
+def branch_sort_key(branch: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r'\d+', branch)[:3])
+
+
+def find_revision_for_version(version: str) -> str | None:
+    """Find the commit that declares "Version <version>" in the newest branch.
+
+    A snapshot can come from a patch release that the mirror no longer serves as
+    a branch, e.g. 3.13.4 once the branch tip moved to 3.13.5.
+    """
+    branches = list_remote_branches()
+    if not branches:
+        return None
+
+    newest = max(branches, key=branch_sort_key)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run([GIT_CMD, 'init', '-q'], cwd=tmp, check=True, capture_output=True)
+            subprocess.run([GIT_CMD, 'remote', 'add', 'origin', OHOS_DART_GIT_URL],
+                           cwd=tmp, check=True, capture_output=True)
+            subprocess.run([GIT_CMD, 'fetch', '-q', '--depth', '200', '--filter=blob:none',
+                            'origin', newest], cwd=tmp, check=True, capture_output=True)
+            log = subprocess.run([GIT_CMD, 'log', '--format=%H%x09%s', 'FETCH_HEAD'],
+                                 cwd=tmp, check=True, capture_output=True, text=True)
+    except Exception:
+        return None
+
+    wanted = f'Version {version}'
+    for line in log.stdout.splitlines():
+        commit, _, subject = line.partition('\t')
+        if subject.strip() == wanted:
+            return commit
     return None
 
 
@@ -152,6 +192,11 @@ def resolve_ohos_dart_branch(version: str, snapshot_hash: str | None = None,
     remote_branch = probe_remote_ohos_branches(version)
     if remote_branch:
         return remote_branch
+
+    revision = find_revision_for_version(version)
+    if revision:
+        save_cached_ohos_branches({version: revision})
+        return revision
 
     return f'flutter_{version}_deps'
 

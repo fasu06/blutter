@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from blutter_ghidra import convert, records
+from blutter_support import export_scripts
 
 
 HEADER: str = '''typedef struct DartThread {
@@ -99,6 +100,31 @@ class GhidraConversionTests(unittest.TestCase):
             self.assertTrue((output / 'blutter.tsv').read_text().startswith('BLUTTER_GHIDRA\t1\n'))
             with self.assertRaisesRegex(ValueError, 'empty'):
                 convert(source, output)
+
+
+class ExportScriptsTests(unittest.TestCase):
+    def test_one_run_produces_all_three_imports(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            outdir = Path(temporary) / 'out'
+            ida_dir = outdir / 'ida_script'
+            ida_dir.mkdir(parents=True)
+            (ida_dir / 'addNames.py').write_text(script_with('汉字'), encoding='utf-8')
+            (ida_dir / 'ida_dart_struct.h').write_text(HEADER, encoding='utf-8')
+
+            export_scripts(str(outdir))
+
+            self.assertTrue((outdir / 'ghidra' / 'blutter.tsv').is_file())
+            self.assertTrue((outdir / 'ghidra' / 'BlutterImport.java').is_file())
+            self.assertTrue((outdir / 'blutter.r2').is_file())
+
+            first = (outdir / 'ghidra' / 'blutter.tsv').read_text(encoding='utf-8')
+            export_scripts(str(outdir))
+            self.assertEqual((outdir / 'ghidra' / 'blutter.tsv').read_text(encoding='utf-8'), first)
+
+    def test_ignores_output_without_an_ida_script(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            export_scripts(temporary)
+            self.assertEqual(list(Path(temporary).iterdir()), [])
 
 
 if __name__ == '__main__':

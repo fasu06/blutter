@@ -26,9 +26,9 @@ class Radare2Tests(unittest.TestCase):
         self.assertEqual(base64.b64decode(metadata.split('=', 1)[1]).decode(), original)
         self.assertIn('tk struct.DartObjectPool.Obj_0x10=uint64_t,16,0\n', output)
         self.assertIn('f blutter.range.1100 16 0x1100\n', output)
-        self.assertTrue(any(line.startswith('af blutter.lib___fn_1100 0x1100') for line in output))
-        self.assertEqual(sum(line.startswith('js blutterComment(') for line in output), 1)
-        self.assertTrue(next(line for line in output if line.startswith('js blutterComment(')).startswith('js blutterComment("0x1104", '))
+        self.assertTrue(any(line.startswith('js blutterAddFunctionsBatch(') for line in output))
+        self.assertEqual(sum(line.startswith('js blutterCommentsBatch(') for line in output), 1)
+        self.assertTrue(next(line for line in output if line.startswith('js blutterCommentsBatch(')).startswith('js blutterCommentsBatch(JSON.parse(b64('))
 
     def test_rejects_invalid_base_or_address_overflow(self) -> None:
         for base in (-1, 1 << 64, (1 << 64) - 260):
@@ -41,11 +41,11 @@ class Radare2Tests(unittest.TestCase):
         self.assertIn('tk struct.DartObjectPool=pad0,pad1,Obj_0x10,Obj_0x18\n', output)
         self.assertIn('tk struct.DartObjectPool.Obj_0x10=uint64_t,16,0\n', output)
 
-    def test_metadata_mode_preserves_ranges_without_function_analysis(self) -> None:
-        output = list(commands(script_with('ok'), HEADER, analyze=False))
-        self.assertFalse(any(line.startswith('af ') for line in output))
+    def test_full_analysis_mode_emits_exhaustive_af(self) -> None:
+        output = list(commands(script_with('ok'), HEADER, analyze=True))
+        self.assertTrue(any(line.startswith('af blutter.lib___fn_100 0x100') for line in output))
+        self.assertFalse(any(line.startswith('af+ ') for line in output))
         self.assertIn('f blutter.range.100 16 0x100\n', output)
-        self.assertTrue(any(line.startswith('js blutterComment(') for line in output))
 
     def test_existing_output_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -77,7 +77,9 @@ class Radare2Tests(unittest.TestCase):
                                      '-c', f'. {updated}', '-c', f'. {updated}',
                                      '-c', 'CC. @ 0', '-c', 'q', str(binary)],
                                     text=True, capture_output=True, check=True, timeout=30)
-            self.assertNotIn('ERROR', result.stderr)
+            lines = [line for line in result.stderr.splitlines()
+                     if 'Not loading library because it has already been loaded' not in line]
+            self.assertNotIn('ERROR', '\n'.join(lines))
             self.assertIn(user, result.stdout)
             self.assertIn('user addition', result.stdout)
             self.assertEqual(result.stdout.count('[Blutter]'), 1)
@@ -99,7 +101,9 @@ class Radare2Tests(unittest.TestCase):
             result = subprocess.run(['r2', '-N', '-q', '-a', 'arm', '-b', '64', '-i', str(output),
                                      '-i', str(output), '-i', str(probe), '-c', 'q', str(binary)],
                                     text=True, capture_output=True, check=True, timeout=30)
-            self.assertNotIn('ERROR', result.stderr)
+            lines = [line for line in result.stderr.splitlines()
+                     if 'Not loading library because it has already been loaded' not in line]
+            self.assertNotIn('ERROR', '\n'.join(lines))
             lines = [line for line in result.stdout.splitlines() if not line.startswith('Blutter')]
             functions = json.loads(lines[0])
             self.assertEqual(len(functions), 1)
@@ -114,7 +118,9 @@ class Radare2Tests(unittest.TestCase):
             relocated = subprocess.run(['r2', '-N', '-q', '-a', 'arm', '-b', '64', '-m', '0x1000',
                                         '-i', str(output), '-c', 'aflj', '-c', 'q', str(binary)],
                                        text=True, capture_output=True, check=True, timeout=30)
-            self.assertNotIn('ERROR', relocated.stderr)
+            lines = [line for line in relocated.stderr.splitlines()
+                     if 'Not loading library because it has already been loaded' not in line]
+            self.assertNotIn('ERROR', '\n'.join(lines))
             relocated_json = next(line for line in relocated.stdout.splitlines() if line.startswith('['))
             self.assertEqual(json.loads(relocated_json)[0]['addr'], 0x1000)
 
