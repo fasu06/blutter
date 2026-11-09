@@ -132,6 +132,15 @@ class BlutterUnifiedTests(unittest.TestCase):
             engine_ids = res[5]
             self.assertIn('24497d6833225b0445953e1dd05dc6538c16a8dd', engine_ids)
 
+    def test_cmake_normalizes_windows_dependency_paths(self) -> None:
+        scripts_cmake = (ROOT / 'scripts/CMakeLists.txt').read_text()
+        self.assertIn('cmake_path(SET ICU_ROOT NORMALIZE "${PROJECT_SOURCE_DIR}/../../external/icu-windows")', scripts_cmake)
+        self.assertNotIn('set(ICU_ROOT "${PROJECT_SOURCE_DIR}/../../external/icu-windows")', scripts_cmake)
+
+        blutter_cmake = (ROOT / 'blutter/CMakeLists.txt').read_text()
+        self.assertIn('cmake_path(SET CAPSTONE_DLL NORMALIZE', blutter_cmake)
+        self.assertIn('cmake_path(SET CAPSTONE_LIB NORMALIZE', blutter_cmake)
+
 
 if __name__ == '__main__':
     unittest.main()

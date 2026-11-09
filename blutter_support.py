@@ -62,6 +62,7 @@ def export_scripts(outdir: str) -> None:
 
 
 def run_blutter(executable: str, libapp_path: str, outdir: str) -> None:
+    os.makedirs(outdir, exist_ok=True)
     proc = subprocess.Popen([executable, '-i', libapp_path, '-o', outdir],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     failed = False
