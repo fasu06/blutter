@@ -3,6 +3,7 @@ bin/
 build/
 tmp/
 out/
+downloads/
 dartsdk/
 external/
 packages/
