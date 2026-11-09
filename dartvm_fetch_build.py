@@ -185,6 +185,9 @@ def cmake_dart(info: DartLibInfo, target_dir: str):
     subprocess.run([CMAKE_CMD, '--install', '.'], cwd=builddir, check=True)
 
 def fetch_and_build(info: DartLibInfo):
+    if os.name == 'nt':
+        from blutter_support import init_windows_build_env
+        init_windows_build_env()
     outdir = checkout_dart(info)
     cmake_dart(info, outdir)
 

@@ -164,6 +164,9 @@ def verify_sdk(directory: Path, snapshot: Snapshot) -> None:
 
 
 def build_runtime(directory: Path, snapshot: Snapshot, identity: str, jobs: int) -> str:
+    if sys.platform == 'win32':
+        from blutter_support import init_windows_build_env
+        init_windows_build_env()
     library = f'dartvm{identity}_arm64'
     template = (ROOT / 'scripts/CMakeLists.txt').read_text()
     standard_match = re.search(r'-std=c\+\+(\d+)',

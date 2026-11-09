@@ -704,7 +704,7 @@ std::unique_ptr<CallLeafRuntimeInstr> FunctionAnalyzer::processCallLeafRuntime(A
 					continue;
 				}
 				else {
-					INSN_ASSERT(il);
+					return nullptr;
 				}
 			}
 			if (il->srcReg == A64::Register::FP) {

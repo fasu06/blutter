@@ -11,7 +11,7 @@ import subprocess
 import sys
 import zipfile
 import tempfile
-from blutter_support import extract_libs_from_hap, run_blutter
+from blutter_support import extract_libs_from_hap, init_windows_build_env, run_blutter
 from dartvm_fetch_build import DartLibInfo
 
 CMAKE_CMD = "cmake"
@@ -173,6 +173,9 @@ def get_dart_lib_info(libapp_path: str, libflutter_path: str, dart_sdk_commit: s
                        commit=dart_sdk_commit, engine_ids=engine_ids)
 
 def build_and_run(input: BlutterInput):
+    if os.name == 'nt':
+        init_windows_build_env()
+
     if not os.path.isfile(input.blutter_file) or input.rebuild_blutter:
         # before fetch and build, check the existence of compiled library first
         #   so the src and build directories can be deleted
@@ -194,13 +197,17 @@ def build_and_run(input: BlutterInput):
         dbg_cmd_args = f'-i {input.libapp_path} -o {dbg_output_path}'
 
         vscmd_ver = os.getenv('VSCMD_VER')
-        assert vscmd_ver is not None, "Need run blutter in Visual Studio Develeper console"
+        assert vscmd_ver is not None, "Need run blutter in Visual Studio Developer console"
         if vscmd_ver.startswith('18.'):
             generator = 'Visual Studio 18 2026'
         elif vscmd_ver.startswith('17.'):
             generator = 'Visual Studio 17 2022'
+        elif vscmd_ver.startswith('16.'):
+            generator = 'Visual Studio 16 2019'
+        elif vscmd_ver.startswith('15.'):
+            generator = 'Visual Studio 15 2017'
         else:
-            assert False, "Unknown Visual Studio version"
+            assert False, f"Unknown Visual Studio version: {vscmd_ver}"
 
         subprocess.run([CMAKE_CMD, '-G', generator, '-A', 'x64', '-B', input.outdir, f'-DDARTLIB={input.dart_info.lib_name}', 
                         f'-DNAME_SUFFIX={input.name_suffix}', f'-DDBG_CMD:STRING={dbg_cmd_args}'] + macros + [blutter_dir], check=True)
