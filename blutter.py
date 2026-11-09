@@ -11,7 +11,7 @@ import subprocess
 import sys
 import zipfile
 import tempfile
-from blutter_support import extract_libs_from_hap, init_windows_build_env, run_blutter
+from blutter_support import extract_libs_from_hap, run_blutter
 from dartvm_fetch_build import DartLibInfo
 
 CMAKE_CMD = "cmake"
@@ -173,9 +173,6 @@ def get_dart_lib_info(libapp_path: str, libflutter_path: str, dart_sdk_commit: s
                        commit=dart_sdk_commit, engine_ids=engine_ids)
 
 def build_and_run(input: BlutterInput):
-    if os.name == 'nt':
-        init_windows_build_env()
-
     if not os.path.isfile(input.blutter_file) or input.rebuild_blutter:
         # before fetch and build, check the existence of compiled library first
         #   so the src and build directories can be deleted

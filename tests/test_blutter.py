@@ -1,23 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
-import shutil
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 import zipfile
 
 import ohos_sdk
 from blutter import extract_libs_from_hap, find_compat_macro
-from blutter_support import (
-    find_visual_studio,
-    find_vcvars_script,
-    find_vswhere,
-    init_windows_build_env,
-    query_vs_env,
-)
 from dartvm_fetch_build import DartLibInfo
 from ohos_sdk import (
     OHOS_DART_REVISIONS,
@@ -140,95 +131,6 @@ class BlutterUnifiedTests(unittest.TestCase):
             self.assertEqual(len(res), 6)
             engine_ids = res[5]
             self.assertIn('24497d6833225b0445953e1dd05dc6538c16a8dd', engine_ids)
-
-
-class WindowsBuildEnvTests(unittest.TestCase):
-    def test_init_windows_build_env_noop_on_non_windows(self) -> None:
-        with patch('sys.platform', 'linux'), patch('os.name', 'posix'):
-            self.assertFalse(init_windows_build_env(force=True))
-
-    def test_init_windows_build_env_already_active(self) -> None:
-        with patch('sys.platform', 'win32'), patch('os.name', 'nt'), \
-             patch('shutil.which', return_value=r'C:\VS\VC\Tools\MSVC\bin\cl.exe'), \
-             patch.dict('os.environ', {'VSCMD_VER': '17.8.3'}):
-            self.assertTrue(init_windows_build_env(force=True))
-
-    def test_find_vswhere_detects_standard_path(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            fake_installer = Path(tmp) / 'Microsoft Visual Studio' / 'Installer'
-            fake_installer.mkdir(parents=True)
-            fake_vswhere = fake_installer / 'vswhere.exe'
-            fake_vswhere.write_bytes(b'')
-
-            with patch.dict('os.environ', {'ProgramFiles(x86)': tmp}):
-                found = find_vswhere()
-                self.assertEqual(found, str(fake_vswhere))
-
-    def test_find_visual_studio_parses_vswhere_json(self) -> None:
-        mock_output = json.dumps([{
-            'installationPath': r'C:\Program Files\Microsoft Visual Studio\2022\Community',
-            'installationVersion': '17.10.3',
-        }])
-        with patch('blutter_support.find_vswhere', return_value=r'C:\fake\vswhere.exe'), \
-             patch('subprocess.run', return_value=MagicMock(stdout=mock_output, returncode=0)), \
-             patch('os.path.isdir', return_value=True):
-            res = find_visual_studio()
-            self.assertIsNotNone(res)
-            assert res is not None
-            self.assertEqual(res[0], r'C:\Program Files\Microsoft Visual Studio\2022\Community')
-            self.assertEqual(res[1], '17.10.3')
-
-    def test_find_vcvars_script(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            vs_dir = Path(tmp)
-            vcvars = vs_dir / 'VC' / 'Auxiliary' / 'Build' / 'vcvarsall.bat'
-            vcvars.parent.mkdir(parents=True)
-            vcvars.write_bytes(b'')
-
-            self.assertEqual(find_vcvars_script(str(vs_dir)), str(vcvars))
-
-    def test_query_vs_env_parses_sentinel(self) -> None:
-        mock_stdout = (
-            "** Visual Studio 2022 Developer Command Prompt v17.10.3\n"
-            "__BLUTTER_VS_ENV_START__\n"
-            "INCLUDE=C:\\MSVC\\include\n"
-            "LIB=C:\\MSVC\\lib\n"
-            "VSCMD_VER=17.10.3\n"
-            "EMPTY_VAR=\n"
-        )
-        with patch('subprocess.run', return_value=MagicMock(stdout=mock_stdout, returncode=0)):
-            env = query_vs_env(r'C:\vcvarsall.bat', 'x64')
-            self.assertEqual(env.get('INCLUDE'), r'C:\MSVC\include')
-            self.assertEqual(env.get('LIB'), r'C:\MSVC\lib')
-            self.assertEqual(env.get('VSCMD_VER'), '17.10.3')
-
-    def test_init_windows_build_env_full_activation(self) -> None:
-        fake_vs = r'C:\Program Files\Microsoft Visual Studio\2022\Community'
-        fake_vcvars = fake_vs + r'\VC\Auxiliary\Build\vcvarsall.bat'
-        captured_env = {
-            'INCLUDE': r'C:\MSVC\include',
-            'LIB': r'C:\MSVC\lib',
-            'PATH': r'C:\MSVC\bin',
-            'VSCMD_VER': '17.10.3',
-        }
-
-        with patch('sys.platform', 'win32'), patch('os.name', 'nt'), \
-             patch('shutil.which', side_effect=lambda name: None), \
-             patch('blutter_support.find_visual_studio', return_value=(fake_vs, '17.10.3')), \
-             patch('blutter_support.find_vcvars_script', return_value=fake_vcvars), \
-             patch('blutter_support.query_vs_env', return_value=captured_env), \
-             patch.dict('os.environ', {}, clear=True):
-            self.assertTrue(init_windows_build_env(force=True))
-            self.assertEqual(os.environ.get('INCLUDE'), r'C:\MSVC\include')
-            self.assertEqual(os.environ.get('VSCMD_VER'), '17.10.3')
-
-    def test_init_windows_build_env_raises_when_vs_missing(self) -> None:
-        with patch('sys.platform', 'win32'), patch('os.name', 'nt'), \
-             patch('shutil.which', return_value=None), \
-             patch('blutter_support.find_visual_studio', return_value=None):
-            with self.assertRaises(RuntimeError) as ctx:
-                init_windows_build_env(force=True)
-            self.assertIn('Visual Studio C++ build environment not found', str(ctx.exception))
 
 
 if __name__ == '__main__':
